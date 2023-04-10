@@ -1,8 +1,9 @@
 from machine import Pin, ADC, PWM
+from random import randint
 from math import floor, ceil
-from time import sleep_ms
+from time import sleep
 
-__SYSTEM_PWM_FREQUENCY__ = 500
+__SYSTEM_PWM_FREQUENCY__ = 1000
 
 WAVEFORMS = ['sine', 'square', 'saw', 'triangle']
 
@@ -78,15 +79,15 @@ def blink(controller: type[ADC], target=Pin(25, Pin.OUT), sleep_duration = 1000)
     # POT.read_u16() / 65535 approaches 0 as potentiometer approaches max,
     # approaches 1 as potentiometer approaches min
     
-    modulated_sleep = max(floor(sleep_duration * (controller.read_u16()) / 65535), 5)
+    modulated_sleep = max(floor(sleep_duration * (controller.read_u16()) / 65535), 5) / 1000
     
     target.value(1)
-    sleep_ms(modulated_sleep)
+    sleep(modulated_sleep)
     
     modulated_sleep = max(floor(sleep_duration * (controller.read_u16()) / 65535), 5)
     
     target.value(0)
-    sleep_ms(modulated_sleep)
+    sleep(modulated_sleep)
 
 
 """ " " " " " " " " " " " " " " " " " " " " " "
@@ -126,12 +127,21 @@ class PWMOutput:
         new_pwm = PWM(Pin(PIN))
         self.PWM = new_pwm
 
+        self.PWM.freq(__SYSTEM_PWM_FREQUENCY__)
+        self.duty = duty
+
     def set_duty(self, duty: int):
         self.PWM.duty_u16(duty)
         return self.PWM.duty_u16()
 
     def get_duty(self):
         return self.PWM.duty_u16()
+    
+    def get_freq(self):
+        return self.PWM.freq()
+    
+    def set_freq(self, freq: int):
+        self.PWM.freq(freq)
 
 class DigitalOut:
     def __init__(self, PIN: int):
@@ -150,7 +160,7 @@ class Oscillator:
     def step(self):
         current_step = SINE_WAVE[self.current_tick]
         self.current_tick = self.current_tick + 1 if self.current_tick + 1 < len(SINE_WAVE) else 0
-        sleep_ms(self.tick_interval_ms)
+        sleep(self.tick_interval_ms / 1000)
         return current_step
         
     def out(self, cb):
@@ -161,7 +171,7 @@ class Oscillator:
             current_step = SINE_WAVE[self.current_tick]
             self.current_tick = current_step + 1 if current_step + 1 < len(SINE_WAVE) else 0
             
-            sleep_ms(ceil(self.tick_interval_ms))
+            sleep(self.tick_interval_ms / 1000)
             return self.out(cb)
 
 class Synthesizer:
@@ -211,9 +221,22 @@ class Synthesizer:
     def __init__(self, config):
         self.config = config
 
-pot = Potentiometer(0)
-cv_out = PWMOutput(1, 512)
+gate_out = PWM(Pin(15))
+voct_out = PWM(Pin(16))
+
+gate_out.freq(__SYSTEM_PWM_FREQUENCY__)
+voct_out.freq(__SYSTEM_PWM_FREQUENCY__)
+
+values = [0.1, 0.2, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]
+# values[x] * 65535 = our random pitch
 
 while True:
-    cv_out.set_duty(pot.read())
+    random_value = values[randint(0, len(values) - 1)] * 65535
+    print(int(random_value))
+    print('go')
 
+    gate_out.duty_u16(65535)
+    voct_out.duty_u16(int(random_value))
+    sleep(0.25)
+    gate_out.duty_u16(0)
+    sleep(1.5)
