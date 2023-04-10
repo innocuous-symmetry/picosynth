@@ -1,7 +1,20 @@
+# PICOSYNTH
+# open source semi-modular synthesizer model
+# developer: Mikayla Dobson
+# github: github.com/innocuous-symmetry
+
+""" " " " " " " " " " " " " " " " " " " " " " "
+IMPORTS
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
+
 from machine import Pin, ADC, PWM
 from random import randint
 from math import floor, ceil
 from time import sleep
+
+""" " " " " " " " " " " " " " " " " " " " " " "
+CONSTANTS
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 
 __SYSTEM_PWM_FREQUENCY__ = 1000
 
@@ -80,6 +93,9 @@ SYNTH_CONFIG = {
     }
 }
 
+""" " " " " " " " " " " " " " " " " " " " " " "
+INDEPENDENT FUNCTIONS FOR TESTING, COMMON USE CASES
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 def blink(controller: type[ADC], target=Pin(25, Pin.OUT), sleep_duration = 1000):
     if not controller: pass
 
@@ -98,7 +114,7 @@ def blink(controller: type[ADC], target=Pin(25, Pin.OUT), sleep_duration = 1000)
 
 
 """ " " " " " " " " " " " " " " " " " " " " " "
-" BEGIN CLASS DEFINITIONS FOR BASIC HARDWARE BEHAVIORS
+" CLASS DEFINITIONS FOR BASIC HARDWARE BEHAVIORS
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 
 # for representing and interacting with waveform data
@@ -227,8 +243,18 @@ class Synthesizer:
     def __init__(self, config):
         self.config = config
 
+
+""" " " " " " " " " " " " " " " " " " " " " " "
+SYNTHESIZER DEFINITION AND PIN/COMPONENT ASSIGNMENTS
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
+
 gate_out = PWMOutput(15, 0)
 voct_out = PWMOutput(16, 0)
+
+
+""" " " " " " " " " " " " " " " " " " " " " " "
+START
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 
 while True:
     random_value = VOCT_PITCH_VALUES[randint(0, len(VOCT_PITCH_VALUES) - 1)] * 65535
