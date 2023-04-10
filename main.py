@@ -1,50 +1,13 @@
-from machine import Pin, ADC
+from machine import Pin, ADC, PWM
 from math import floor, ceil
 from time import sleep_ms
 
-led = Pin(25, Pin.OUT)
-pot = ADC(0)
-cv_left = ADC(1)
-cv_right = ADC(2)
+__SYSTEM_PWM_FREQUENCY__ = 500
 
-#pot_two = ADC(25)
-# analog_one = ADC(32)
-# analog_two = ADC(33)
-
-def read_cv(target, interval = 100):
-    print(target.read_u16())
-    sleep_ms(interval)
-    
-def cv_to_led(target, interval = 100):
-    modulated_cv = round(target.read_u16() / 65535)
-    led.value(modulated_cv)
-    sleep_ms(interval)
-
-def blink(sleep_duration = 1000):
-    # pot.read_u16() / 65535 approaches 0 as potentiometer approaches max,
-    # approaches 1 as potentiometer approaches min
-    
-    modulated_sleep = max( \
-        floor(sleep_duration * (pot.read_u16()) / 65535), \
-        5 \
-    )
-    
-    led.value(1)
-    sleep_ms(modulated_sleep)
-    
-    modulated_sleep = max( \
-        floor(sleep_duration * (pot.read_u16()) / 66000), \
-        5 \
-    )
-    
-    led.value(0)
-    sleep_ms(modulated_sleep)
-    
-
-from time import sleep
+WAVEFORMS = ['sine', 'square', 'saw', 'triangle']
 
 # thank you rsta2 : https://github.com/rsta2/minisynth/blob/master/src/oscillator.cpp
-sine_wave = [
+SINE_WAVE = [
     0.00000000, 0.01745241, 0.03489950, 0.05233596, 0.06975647, 0.08715574, 0.10452846, 0.12186934,
     0.13917310, 0.15643447, 0.17364818, 0.19080900, 0.20791169, 0.22495105, 0.24192190, 0.25881905,
     0.27563736, 0.29237170, 0.30901699, 0.32556815, 0.34202014, 0.35836795, 0.37460659, 0.39073113,
@@ -92,60 +55,165 @@ sine_wave = [
     -0.13917310, -0.12186934, -0.10452846, -0.08715574, -0.06975647, -0.05233596, -0.03489950, -0.01745241
 ]
 
-ONE_HERTZ = len(sine_wave) / 1000
+# the format for specifying synthesizer configuration
+SYNTH_CONFIG = {
+    # valid member types: analog in, digital in
+    "inputs": [],
+    # valid member types: digital out, PWM out
+    "outputs": [],
 
+    # specifies the ways each module on the synthesizer should behave
+    "module_config": {
+        # modules A and B will have a different hardware configuration
+        "A": {},
+        "B": {},
+        "C": {},
+        "D": {}
+    }
+}
+
+def blink(controller: type[ADC], target=Pin(25, Pin.OUT), sleep_duration = 1000):
+    if not controller: pass
+
+    # POT.read_u16() / 65535 approaches 0 as potentiometer approaches max,
+    # approaches 1 as potentiometer approaches min
+    
+    modulated_sleep = max(floor(sleep_duration * (controller.read_u16()) / 65535), 5)
+    
+    target.value(1)
+    sleep_ms(modulated_sleep)
+    
+    modulated_sleep = max(floor(sleep_duration * (controller.read_u16()) / 65535), 5)
+    
+    target.value(0)
+    sleep_ms(modulated_sleep)
+
+
+""" " " " " " " " " " " " " " " " " " " " " " "
+" BEGIN CLASS DEFINITIONS FOR BASIC HARDWARE BEHAVIORS
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
+
+# for representing and interacting with waveform data
+class Hertz:
+    ONE_HERTZ = len(SINE_WAVE) / 1000
+
+    def __init__(self, hz: int):
+        self.hz = hz
+        self.tick_freq = self.ONE_HERTZ * hz
+        pass
+
+# basic set of analog input behaviors
+class AnalogInput:
+    def __init__(self, ADC_PIN):
+        self.PIN = ADC(ADC_PIN)
+        self.value = 0
+
+    def read(self):
+        self.value = self.PIN.read_u16()
+        return self.value
+    
+    def read_polar(self):
+        self.value = self.PIN.read_u16() / 65535
+        return self.value
+    
+class Potentiometer(AnalogInput):
+    def __init__(self, ADC_PIN: int):
+        super().__init__(ADC_PIN)
+
+# output behaviors and utilities
+class PWMOutput:
+    def __init__(self, PIN: int, duty: int = 512):
+        new_pwm = PWM(Pin(PIN))
+        self.PWM = new_pwm
+
+    def set_duty(self, duty: int):
+        self.PWM.duty_u16(duty)
+        return self.PWM.duty_u16()
+
+    def get_duty(self):
+        return self.PWM.duty_u16()
+
+class DigitalOut:
+    def __init__(self, PIN: int):
+        self.PIN = Pin(PIN, Pin.OUT)
+
+    def read(self):
+        return self.PIN.value()
+    
 class Oscillator:
-    def __init__(self, tick_interval_ms = 35, current_tick = 0) -> None:
+    def __init__(self, waveform = 'sine', tick_interval_ms: int = 35, current_tick: int = 0) -> None:
         self.tick_interval_ms = ceil(tick_interval_ms)
+        self.waveform = waveform if waveform in WAVEFORMS else None
         self.current_tick = current_tick
+        self.value = 0
         
     def step(self):
-        print(pot.read_u16())
-        
-        current_step = sine_wave[self.current_tick]
-        self.current_tick = self.current_tick + 1 if self.current_tick + 1 < len(sine_wave) else 0
+        current_step = SINE_WAVE[self.current_tick]
+        self.current_tick = self.current_tick + 1 if self.current_tick + 1 < len(SINE_WAVE) else 0
         sleep_ms(self.tick_interval_ms)
         return current_step
         
     def out(self, cb):
-        current_step = sine_wave[self.current_tick]
-        self.current_tick = self.current_tick + 1 if self.current_tick + 1 < len(sine_wave) else 0
-        
-        sleep_ms(ceil(self.tick_interval_ms))
-        return self.out(cb)
-
-class DigitalOutput:
-    def __init__(self, POS_PIN, NEG_PIN):
-        self.POS_OUT = Pin(POS_PIN, Pin.OUT)
-        self.NEG_OUT = Pin(NEG_PIN, Pin.OUT)
-        
-    def simulate(self, data: float):
-        if (data >= 0):
-            print(data)
-        else:
+        if (self.waveform is 'square'):
+            self.value = not self.value
             pass
-        
-    def send(self, data: float, ):
-        if (data >= 0):
-            self.POS_OUT.value(data)
         else:
-            self.NEG_OUT.value(data * -1)
+            current_step = SINE_WAVE[self.current_tick]
+            self.current_tick = current_step + 1 if current_step + 1 < len(SINE_WAVE) else 0
             
-def get_hz(target: int):
-    return len(sine_wave) / (target * 1000)
+            sleep_ms(ceil(self.tick_interval_ms))
+            return self.out(cb)
 
-osc = Oscillator(get_hz(2))
-out_one = DigitalOutput(19, 20)
+class Synthesizer:
+    # PIN CONFIGURATION
 
-print(Pin(16, Pin.IN).value())
+    p1 = None       # GP0
+    p2 = None       # GP1
+  # p3 = GND
+    p4 = None       # GP2
+    p5 = None       # GP3
+    p6 = None       # GP4
+    p7 = None       # GP5
+  # p8 = GND
+    p9 = None       # GP6
+    p10 = None
+    p11 = None
+    p12 = None
+  # p13 = GND
+    p14 = None      # GP10
+    p15 = None
+    p16 = None
+    p17 = None
+  # p18 = GND
+    p19 = None      # GP14
+    p20 = None
+    p21 = None
+    p22 = None
+  # p23 = GND
+    p24 = None      # GP18
+    p25 = None
+    p26 = None
+    p27 = None
+  # p28 = GND
+    p29 = None      # GP22
+  # p30 = RUN
+    p31 = None      # GP26, ADC0
+    p32 = None      # GP27, ADC1
+  # p33 = GND, AGND
+    p34 = None      # GP28, ADC2
+    p35 = None      # ADC_VREF
+    # p36 = 3v3(out)
+    # p37 = 3V3_EN
+    # p38 = GND
+    # p39 = VSYS
+    # p40 = VBUS
 
-def main():
-    pass
-    # while True:
-        # out_one.send(osc.step())
-        # print(osc.osc_out())
-        # blink()
-        # read_cv(cv_right, 35)
-        # cv_to_led(cv_right, 35)
+    def __init__(self, config):
+        self.config = config
 
-# led.value(0)
+pot = Potentiometer(0)
+cv_out = PWMOutput(1, 512)
+
+while True:
+    cv_out.set_duty(pot.read())
+
