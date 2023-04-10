@@ -5,6 +5,10 @@ from time import sleep
 
 __SYSTEM_PWM_FREQUENCY__ = 1000
 
+HIGH = 65535
+MID = HIGH / 2
+LOW = 0
+
 WAVEFORMS = ['sine', 'square', 'saw', 'triangle']
 
 # thank you rsta2 : https://github.com/rsta2/minisynth/blob/master/src/oscillator.cpp
@@ -55,6 +59,9 @@ SINE_WAVE = [
     -0.27563736, -0.25881905, -0.24192190, -0.22495105, -0.20791169, -0.19080900, -0.17364818, -0.15643447,
     -0.13917310, -0.12186934, -0.10452846, -0.08715574, -0.06975647, -0.05233596, -0.03489950, -0.01745241
 ]
+
+VOCT_PITCH_VALUES = [0.1, 0.2, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]
+# VOCT_PITCH_VALUES[x] * 65535 = our random pitch
 
 # the format for specifying synthesizer configuration
 SYNTH_CONFIG = {
@@ -125,9 +132,8 @@ class Potentiometer(AnalogInput):
 class PWMOutput:
     def __init__(self, PIN: int, duty: int = 512):
         new_pwm = PWM(Pin(PIN))
+        new_pwm.freq(__SYSTEM_PWM_FREQUENCY__)
         self.PWM = new_pwm
-
-        self.PWM.freq(__SYSTEM_PWM_FREQUENCY__)
         self.duty = duty
 
     def set_duty(self, duty: int):
@@ -221,22 +227,16 @@ class Synthesizer:
     def __init__(self, config):
         self.config = config
 
-gate_out = PWM(Pin(15))
-voct_out = PWM(Pin(16))
-
-gate_out.freq(__SYSTEM_PWM_FREQUENCY__)
-voct_out.freq(__SYSTEM_PWM_FREQUENCY__)
-
-values = [0.1, 0.2, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7]
-# values[x] * 65535 = our random pitch
+gate_out = PWMOutput(15, 0)
+voct_out = PWMOutput(16, 0)
 
 while True:
-    random_value = values[randint(0, len(values) - 1)] * 65535
+    random_value = VOCT_PITCH_VALUES[randint(0, len(VOCT_PITCH_VALUES) - 1)] * 65535
     print(int(random_value))
     print('go')
 
-    gate_out.duty_u16(65535)
-    voct_out.duty_u16(int(random_value))
+    gate_out.set_duty(65535)
+    voct_out.set_duty(int(random_value))
     sleep(0.25)
-    gate_out.duty_u16(0)
+    gate_out.set_duty(0)
     sleep(1.5)
