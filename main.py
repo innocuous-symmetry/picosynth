@@ -1,20 +1,7 @@
-# PICOSYNTH
-# open source semi-modular synthesizer model
-# developer: Mikayla Dobson
-# github: github.com/innocuous-symmetry
-
-""" " " " " " " " " " " " " " " " " " " " " " "
-IMPORTS
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
-
-from machine import Pin, ADC, PWM
+from machine import Pin, ADC, PWM, SPI
 from random import randint
 from math import floor, ceil
 from time import sleep
-
-""" " " " " " " " " " " " " " " " " " " " " " "
-CONSTANTS
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 
 __SYSTEM_PWM_FREQUENCY__ = 1000
 
@@ -93,9 +80,6 @@ SYNTH_CONFIG = {
     }
 }
 
-""" " " " " " " " " " " " " " " " " " " " " " "
-INDEPENDENT FUNCTIONS FOR TESTING, COMMON USE CASES
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 def blink(controller: type[ADC], target=Pin(25, Pin.OUT), sleep_duration = 1000):
     if not controller: pass
 
@@ -112,9 +96,17 @@ def blink(controller: type[ADC], target=Pin(25, Pin.OUT), sleep_duration = 1000)
     target.value(0)
     sleep(modulated_sleep)
 
+# convert input from -1 to 1 range, to u16
+def polar_to_u16(input: float) -> int: 
+    return floor((input + 1) * 32767.5)
+
+# convert input from u16 to -1 to 1 range
+def u16_to_polar(input: int) -> float: 
+    return (input / 32767.5) - 1
+
 
 """ " " " " " " " " " " " " " " " " " " " " " "
-" CLASS DEFINITIONS FOR BASIC HARDWARE BEHAVIORS
+" BEGIN CLASS DEFINITIONS FOR BASIC HARDWARE BEHAVIORS
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
 
 # for representing and interacting with waveform data
@@ -172,29 +164,48 @@ class DigitalOut:
     def read(self):
         return self.PIN.value()
     
+"""
+DEFINITIONS FOR HARDWARE PERIPHERALS
+"""
+
+# adapted from MCCP3008 class by @romilly, which was adapted from Adafruit CircuitPython driver
+# source: https://github.com/romilly/pico-code/blob/master/src/pico_code/pico/mcp3008/mcp3008.py
+class MCP3008:
+    def __init__(self, spi: SPI, chip_select: Pin, ref_voltage=3.3):
+        self.chip_select = chip_select
+        self.chip_select.value(1)
+
+        self._spi = spi
+        self._out_buffer = bytearray(3)
+        self._out_buffer[0] = 0x01
+        self._in_buffer = bytearray(3)
+        self._ref_voltage = ref_voltage
+
+    def get_voltage(self):
+        return self._ref_voltage
+    
+    def read(self, pin):
+        self.chip_select.value(0)
+        self._out_buffer[1] = pin << 4
+        self._spi.write_readinto(self._out_buffer, self._in_buffer)
+        self.chip_select.value(1) # turn off
+        return ((self._in_buffer[1] & 0x03) << 8) | self._in_buffer[2]
+    
 class Oscillator:
-    def __init__(self, waveform = 'sine', tick_interval_ms: int = 35, current_tick: int = 0) -> None:
-        self.tick_interval_ms = ceil(tick_interval_ms)
+    def __init__(self, waveform = 'sine', downsampling: int = 0, current_tick: int = 0) -> None:
         self.waveform = waveform if waveform in WAVEFORMS else None
+        self.downsampling = downsampling
         self.current_tick = current_tick
         self.value = 0
         
-    def step(self):
-        current_step = SINE_WAVE[self.current_tick]
-        self.current_tick = self.current_tick + 1 if self.current_tick + 1 < len(SINE_WAVE) else 0
-        sleep(self.tick_interval_ms / 1000)
-        return current_step
-        
-    def out(self, cb):
+    def out(self):
         if (self.waveform is 'square'):
             self.value = not self.value
-            pass
         else:
-            current_step = SINE_WAVE[self.current_tick]
-            self.current_tick = current_step + 1 if current_step + 1 < len(SINE_WAVE) else 0
-            
-            sleep(self.tick_interval_ms / 1000)
-            return self.out(cb)
+            current_step = SINE_WAVE[floor(self.current_tick)]
+            interval = self.downsampling if self.downsampling > 0 else 1
+            self.current_tick = self.current_tick + interval if self.current_tick + interval < len(SINE_WAVE) else 0
+            return current_step
 
 class Synthesizer:
     # PIN CONFIGURATION
@@ -243,26 +254,35 @@ class Synthesizer:
     def __init__(self, config):
         self.config = config
 
-
-""" " " " " " " " " " " " " " " " " " " " " " "
-SYNTHESIZER DEFINITION AND PIN/COMPONENT ASSIGNMENTS
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
-
 gate_out = PWMOutput(15, 0)
 voct_out = PWMOutput(16, 0)
 
+# spi = SPI(0, sck=Pin(2), mosi=Pin(3), miso=Pin(4), baudrate=100_000)
+# chip_select = Pin(22, Pin.OUT)
+# chip_select.value(1)
 
-""" " " " " " " " " " " " " " " " " " " " " " "
-START
-_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ """
+# square = Pin(21, Pin.OUT)
+# mcp = MCP3008(spi, chip_select)
 
-while True:
-    random_value = VOCT_PITCH_VALUES[randint(0, len(VOCT_PITCH_VALUES) - 1)] * 65535
-    print(int(random_value))
-    print('go')
+cv_one = PWMOutput(16)
+led_one = PWMOutput(17)
 
-    gate_out.set_duty(65535)
-    voct_out.set_duty(int(random_value))
-    sleep(0.25)
-    gate_out.set_duty(0)
-    sleep(1.5)
+pot = Potentiometer(0)
+
+osc = Oscillator('sine', 32)
+
+timer = 1
+sleep_interval = 0.01
+
+try:
+    while True:
+        current_step = polar_to_u16(osc.out())
+        
+        led_one.set_duty(current_step)
+        cv_one.set_duty(current_step)
+        
+        sleep(0.001 + (pot.read_polar() / 32))
+except KeyboardInterrupt:
+    print("Exiting program...")
+    led_one.set_duty(0)
+    cv_one.set_duty(0)
