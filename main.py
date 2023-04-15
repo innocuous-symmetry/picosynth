@@ -1,7 +1,7 @@
 from machine import Pin, ADC, PWM, SPI
+from utime import sleep
 from random import randint
 from math import floor, ceil
-from time import sleep
 
 __SYSTEM_PWM_FREQUENCY__ = 1000
 
@@ -118,6 +118,25 @@ class Hertz:
         self.tick_freq = self.ONE_HERTZ * hz
         pass
 
+class Oscillator:
+    def __init__(self, waveform = 'sine', downsampling: int = 0, current_tick: int = 0) -> None:
+        self.waveform = waveform if waveform in WAVEFORMS else None
+        self.downsampling = downsampling
+        self.current_tick = current_tick
+        self.value = 0
+        
+    def out(self):
+        if (self.waveform is 'square'):
+            self.value = not self.value
+        else:
+            current_step = SINE_WAVE[floor(self.current_tick)]
+            interval = self.downsampling if self.downsampling > 0 else 1
+            self.current_tick = self.current_tick + interval if self.current_tick + interval < len(SINE_WAVE) else 0
+            return current_step
+        
+    def out_u16(self):
+        return polar_to_u16(self.out())
+
 # basic set of analog input behaviors
 class AnalogInput:
     def __init__(self, ADC_PIN):
@@ -168,121 +187,145 @@ class DigitalOut:
 DEFINITIONS FOR HARDWARE PERIPHERALS
 """
 
-# adapted from MCCP3008 class by @romilly, which was adapted from Adafruit CircuitPython driver
+# from MCCP3008 class by @romilly, which was adapted from Adafruit CircuitPython driver
 # source: https://github.com/romilly/pico-code/blob/master/src/pico_code/pico/mcp3008/mcp3008.py
 class MCP3008:
-    def __init__(self, spi: SPI, chip_select: Pin, ref_voltage=3.3):
-        self.chip_select = chip_select
-        self.chip_select.value(1)
+    def __init__(self, spi, cs, ref_voltage=3.3):
+        """
+        Create MCP3008 instance
 
+        Args:
+            spi: configured SPI bus
+            cs:  pin to use for chip select
+            ref_voltage: r
+        """
+        self.cs = cs
+        self.cs.value(1) # ncs on
         self._spi = spi
-        self._out_buffer = bytearray(3)
-        self._out_buffer[0] = 0x01
-        self._in_buffer = bytearray(3)
+        self._out_buf = bytearray(3)
+        self._out_buf[0] = 0x01
+        self._in_buf = bytearray(3)
         self._ref_voltage = ref_voltage
 
-    def get_voltage(self):
+    def reference_voltage(self) -> float:
+        """Returns the MCP3xxx's reference voltage as a float."""
         return self._ref_voltage
+
+    def read(self, pin, is_differential=False):
+        """
+        read a voltage or voltage difference using the MCP3008.
+
+        Args:
+            pin: the pin to use
+            is_differential: if true, return the potential difference between two pins,
+
+
+        Returns:
+            voltage in range [0, 1023] where 1023 = VREF (3V3)
+
+        """
+
+        self.cs.value(0) # select
+        self._out_buf[1] = ((not is_differential) << 7) | (pin << 4)
+        self._spi.write_readinto(self._out_buf, self._in_buf)
+        self.cs.value(1) # turn off
+        return ((self._in_buf[1] & 0x03) << 8) | self._in_buf[2]
     
-    def read(self, pin):
-        self.chip_select.value(0)
-        self._out_buffer[1] = pin << 4
-        self._spi.write_readinto(self._out_buffer, self._in_buffer)
-        self.chip_select.value(1) # turn off
-        return ((self._in_buffer[1] & 0x03) << 8) | self._in_buffer[2]
+
+class Module:
+    def __init__(self, mcp3008: MCP3008, out_one: int, out_two: int):
+        self.chip = mcp3008
+        self.cv_out_one = PWMOutput(out_one)
+        self.cv_out_two = PWMOutput(out_two)
+
+    def cleanup(self):
+        self.cv_out_one.set_duty(0)
+        self.cv_out_two.set_duty(0)
+
+    def read_one(self, pin: int):
+        return self.chip.read(pin)
+
+    def read_all(self):
+        return {
+            'pot_one': chip.read(0),
+            'pot_two': chip.read(1),
+            'pot_three': chip.read(2),
+            'pot_four': chip.read(3),
+            'cv_in_one': chip.read(4),
+            'cv_in_two': chip.read(5),
+            'cv_in_three': chip.read(6),
+            'cv_in_four': chip.read(7)
+        }
     
-class Oscillator:
-    def __init__(self, waveform = 'sine', downsampling: int = 0, current_tick: int = 0) -> None:
-        self.waveform = waveform if waveform in WAVEFORMS else None
-        self.downsampling = downsampling
-        self.current_tick = current_tick
-        self.value = 0
-        
-    def out(self):
-        if (self.waveform is 'square'):
-            self.value = not self.value
+    def loop(self, sleep_interval=0.01, function=None):
+        if function:
+            function()
         else:
-            current_step = SINE_WAVE[floor(self.current_tick)]
-            interval = self.downsampling if self.downsampling > 0 else 1
-            self.current_tick = self.current_tick + interval if self.current_tick + interval < len(SINE_WAVE) else 0
-            return current_step
+            print()
+            # convert to u16
+            # cv_in_value = self.chip.read(4) * 64
+            # print(cv_in_value)
+            # self.cv_out_one.set_duty(cv_in_value)
 
-class Synthesizer:
-    # PIN CONFIGURATION
 
-    p1 = None       # GP0
-    p2 = None       # GP1
-  # p3 = GND
-    p4 = None       # GP2
-    p5 = None       # GP3
-    p6 = None       # GP4
-    p7 = None       # GP5
-  # p8 = GND
-    p9 = None       # GP6
-    p10 = None
-    p11 = None
-    p12 = None
-  # p13 = GND
-    p14 = None      # GP10
-    p15 = None
-    p16 = None
-    p17 = None
-  # p18 = GND
-    p19 = None      # GP14
-    p20 = None
-    p21 = None
-    p22 = None
-  # p23 = GND
-    p24 = None      # GP18
-    p25 = None
-    p26 = None
-    p27 = None
-  # p28 = GND
-    p29 = None      # GP22
-  # p30 = RUN
-    p31 = None      # GP26, ADC0
-    p32 = None      # GP27, ADC1
-  # p33 = GND, AGND
-    p34 = None      # GP28, ADC2
-    p35 = None      # ADC_VREF
-    # p36 = 3v3(out)
-    # p37 = 3V3_EN
-    # p38 = GND
-    # p39 = VSYS
-    # p40 = VBUS
+        sleep(sleep_interval)
 
-    def __init__(self, config):
-        self.config = config
 
-gate_out = PWMOutput(15, 0)
-voct_out = PWMOutput(16, 0)
+class ADSR(Module):
+    def __init__(self, mcp3008: MCP3008, out_one: int, out_two: int):
+        super().__init__(mcp3008, out_one, out_two)
 
-# spi = SPI(0, sck=Pin(2), mosi=Pin(3), miso=Pin(4), baudrate=100_000)
-# chip_select = Pin(22, Pin.OUT)
-# chip_select.value(1)
+    def loop(self, time_interval=0.01):
+        if time_interval < 0:
+            raise Exception("Time interval may not be less than 0")
+        elif time_interval > 1:
+            raise Exception("Time interval may not be greater than 1")
 
-# square = Pin(21, Pin.OUT)
-# mcp = MCP3008(spi, chip_select)
+        # only move on to envelope generation when a gate is detected
+        if self.chip.read(4) is not 0:
+            # get data and convert to polar
+            attack = (self.chip.read(0) / 1024)
+            decay = (self.chip.read(1) / 1024)
+            sustain = self.chip.read(2) / 1024
+            release = (self.chip.read(3) / 1024)
 
-cv_one = PWMOutput(16)
-led_one = PWMOutput(17)
+            counter = 0
+            value = 0
 
-pot = Potentiometer(0)
+            print(self.chip.read(4))
 
-osc = Oscillator('sine', 32)
+            attack_steps = floor(attack / time_interval)
+            while counter < attack_steps:
+                value = value + time_interval
+                counter = counter + 1
+                print(value)
+                self.cv_out_one.set_duty(floor(value))
 
-timer = 1
-sleep_interval = 0.01
+            decay_steps = floor(decay / time_interval)
+            while counter < attack_steps + decay_steps:
+                value = value - time_interval
+                counter = counter + 1
+                print(value)
+                self.cv_out_one.set_duty(floor(value))
+
+        sleep(time_interval)
+
+
+"""
+variable initialization and prep for loop
+"""
+spi = SPI(0, sck=Pin(2),mosi=Pin(3),miso=Pin(4), baudrate=100000)
+cs = Pin(22, Pin.OUT)
+cs.value(1) # disable chip at start
+
+chip = MCP3008(spi, cs)
+module = Module(chip, out_one=14, out_two=15)
+adsr = ADSR(chip, out_one=14, out_two=15)
 
 try:
     while True:
-        current_step = polar_to_u16(osc.out())
-        
-        led_one.set_duty(current_step)
-        cv_one.set_duty(current_step)
-        
-        sleep(0.001 + (pot.read_polar() / 32))
+        adsr.loop()
 except KeyboardInterrupt:
+    module.cleanup()
     print("Exiting program...")
-    led_one.set_duty(0)
-    cv_one.set_duty(0)
+
